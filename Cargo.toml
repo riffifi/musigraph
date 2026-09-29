@@ -1,0 +1,12 @@
+[package]
+name = "musigraph"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+winit = "0.29"
+wgpu = "0.19"
+cpal = "0.15"
+symphonia = { version = "0.5", features = ["all"] }
+rfd = "0.15"
+fontdue = "0.9"
