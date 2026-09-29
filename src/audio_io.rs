@@ -1,3 +1,4 @@
+use crate::art::{self, CoverArt};
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use std::{
     fs::File,
@@ -89,13 +90,16 @@ impl Drop for EditSource {
     }
 }
 pub fn decode(path: &Path) -> Result<Audio, String> {
+    decode_with_art(path).map(|(audio, _)| audio)
+}
+pub fn decode_with_art(path: &Path) -> Result<(Audio, Option<Arc<CoverArt>>), String> {
     let f = File::open(path).map_err(|e| e.to_string())?;
     let mss = MediaSourceStream::new(Box::new(f), Default::default());
     let mut hint = Hint::new();
     if let Some(ext) = path.extension().and_then(|s| s.to_str()) {
         hint.with_extension(ext);
     }
-    let probed = symphonia::default::get_probe()
+    let mut probed = symphonia::default::get_probe()
         .format(
             &hint,
             mss,
@@ -103,6 +107,11 @@ pub fn decode(path: &Path) -> Result<Audio, String> {
             &MetadataOptions::default(),
         )
         .map_err(|e| e.to_string())?;
+    let cover = probed.metadata.get().and_then(|mut metadata| {
+        metadata
+            .skip_to_latest()
+            .and_then(|revision| art::from_visuals(revision.visuals()))
+    });
     let mut format = probed.format;
     let track = format.default_track().ok_or("no audio track")?;
     let id = track.id;
@@ -136,10 +145,19 @@ pub fn decode(path: &Path) -> Result<Audio, String> {
             out.push(frame.iter().copied().sum::<f32>() / channels as f32);
         }
     }
-    Ok(Audio {
-        samples: Arc::new(out),
-        rate,
-    })
+    let cover = cover.or_else(|| {
+        format
+            .metadata()
+            .skip_to_latest()
+            .and_then(|revision| art::from_visuals(revision.visuals()))
+    });
+    Ok((
+        Audio {
+            samples: Arc::new(out),
+            rate,
+        },
+        cover,
+    ))
 }
 pub struct Playback {
     pub playing: Arc<AtomicBool>,

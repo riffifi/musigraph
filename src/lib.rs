@@ -1,4 +1,5 @@
 pub mod app;
+pub mod art;
 pub mod audio_io;
 pub mod dsp;
 pub mod edit;

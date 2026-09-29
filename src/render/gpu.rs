@@ -1,3 +1,4 @@
+use crate::art::CoverArt;
 use fontdue::Font;
 use std::{collections::HashMap, sync::Arc};
 use winit::window::Window;
@@ -36,8 +37,11 @@ pub struct Gpu {
     capacity: usize,
     atlas: wgpu::Texture,
     spectrogram: wgpu::Texture,
+    cover_texture: wgpu::Texture,
     atlas_bind: wgpu::BindGroup,
     spec_bind: wgpu::BindGroup,
+    cover_bind: wgpu::BindGroup,
+    cover_source: Option<CoverArt>,
     font: Font,
     glyphs: HashMap<(char, u32), Glyph>,
     atlas_x: u32,
@@ -151,6 +155,20 @@ impl Gpu {
             usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
             view_formats: &[],
         });
+        let cover_texture = device.create_texture(&wgpu::TextureDescriptor {
+            label: None,
+            size: wgpu::Extent3d {
+                width: 256,
+                height: 256,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: wgpu::TextureFormat::Rgba8UnormSrgb,
+            usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+            view_formats: &[],
+        });
         let bind = |tex: &wgpu::Texture| {
             device.create_bind_group(&wgpu::BindGroupDescriptor {
                 label: None,
@@ -171,6 +189,7 @@ impl Gpu {
         };
         let atlas_bind = bind(&atlas);
         let spec_bind = bind(&spectrogram);
+        let cover_bind = bind(&cover_texture);
         let font = Font::from_bytes(
             include_bytes!("../../assets/mono.ttf") as &[u8],
             fontdue::FontSettings::default(),
@@ -186,6 +205,8 @@ impl Gpu {
             spectrogram,
             atlas_bind,
             spec_bind,
+            cover_texture,
+            cover_bind,
             font,
             layout,
         )?;
@@ -220,6 +241,8 @@ impl Gpu {
         spectrogram: wgpu::Texture,
         atlas_bind: wgpu::BindGroup,
         spec_bind: wgpu::BindGroup,
+        cover_texture: wgpu::Texture,
+        cover_bind: wgpu::BindGroup,
         font: Font,
         layout: wgpu::BindGroupLayout,
     ) -> Result<Self, String> {
@@ -324,8 +347,11 @@ impl Gpu {
             capacity: 65536,
             atlas,
             spectrogram,
+            cover_texture,
             atlas_bind,
             spec_bind,
+            cover_bind,
+            cover_source: None,
             font,
             glyphs: HashMap::new(),
             atlas_x: 1,
@@ -379,6 +405,49 @@ impl Gpu {
                 color: [1., 1., 1., 1.],
             },
         ));
+    }
+    pub fn cover(&mut self, x: f32, y: f32, w: f32, h: f32, uv: [f32; 4]) {
+        self.draws.push((
+            2,
+            Quad {
+                rect: [x, y, w, h],
+                uv,
+                color: [1., 1., 1., 1.],
+            },
+        ));
+    }
+    pub fn set_cover(&mut self, art: Option<&CoverArt>) {
+        let Some(art) = art else {
+            self.cover_source = None;
+            return;
+        };
+        if self
+            .cover_source
+            .as_ref()
+            .is_some_and(|cached| Arc::ptr_eq(&cached.encoded, &art.encoded))
+        {
+            return;
+        }
+        self.queue.write_texture(
+            wgpu::ImageCopyTexture {
+                texture: &self.cover_texture,
+                mip_level: 0,
+                origin: wgpu::Origin3d::ZERO,
+                aspect: wgpu::TextureAspect::All,
+            },
+            &art.pixels,
+            wgpu::ImageDataLayout {
+                offset: 0,
+                bytes_per_row: Some(art.width * 4),
+                rows_per_image: Some(art.height),
+            },
+            wgpu::Extent3d {
+                width: art.width,
+                height: art.height,
+                depth_or_array_layers: 1,
+            },
+        );
+        self.cover_source = Some(art.clone());
     }
     pub fn line(&mut self, x1: f32, y1: f32, x2: f32, y2: f32, c: Color) {
         self.draws.push((
@@ -578,8 +647,10 @@ impl Gpu {
                     0,
                     if kind == 0 {
                         &self.atlas_bind
-                    } else {
+                    } else if kind == 1 {
                         &self.spec_bind
+                    } else {
+                        &self.cover_bind
                     },
                     &[],
                 );

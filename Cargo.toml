@@ -1,7 +1,8 @@
 [package]
 name = "musigraph"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2021"
+authors = ["Leo Sokolov"]
 
 [dependencies]
 winit = "0.29"
@@ -10,3 +11,4 @@ cpal = "0.15"
 symphonia = { version = "0.5", features = ["all"] }
 rfd = "0.15"
 fontdue = "0.9"
+image = { version = "0.25", default-features = false, features = ["jpeg", "png"] }

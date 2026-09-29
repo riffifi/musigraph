@@ -235,6 +235,7 @@ fn main() {
     let mut app = App::new();
     let mut recent = read_recent();
     let mut help = ui::HelpState::default();
+    let mut about_open = false;
     app.theme = ThemeSettings::new(config_path().with_extension("theme"));
     if let Err(error) = app.theme.read() {
         app.edit_status = Some(error);
@@ -349,7 +350,13 @@ fn main() {
                 WindowEvent::MouseInput { state, button, .. } => {
                     let l = ui::layout(&gpu);
                     if state == ElementState::Pressed {
-                        if button == MouseButton::Left
+                        if about_open {
+                            if button == MouseButton::Left
+                                && ui::about_close_hit(gpu.width, cursor.0, cursor.1)
+                            {
+                                about_open = false;
+                            }
+                        } else if button == MouseButton::Left
                             && ui::help_button_hit(
                                 gpu.width,
                                 gpu.height,
@@ -372,7 +379,9 @@ fn main() {
                             }
                         } else if button == MouseButton::Left {
                             if app.audio.is_none() {
-                                if !app.busy {
+                                if ui::welcome_about_hit(gpu.width, cursor.0, cursor.1) {
+                                    about_open = true;
+                                } else if !app.busy {
                                     match ui::welcome_action(
                                         gpu.width,
                                         gpu.height,
@@ -425,6 +434,10 @@ fn main() {
                                         Ok(())
                                     }
                                     ui::SettingsAction::Reload => app.theme.read(),
+                                    ui::SettingsAction::About => {
+                                        about_open = true;
+                                        Ok(())
+                                    }
                                     ui::SettingsAction::Surface => Ok(()),
                                 };
                                 if let Err(error) = result {
@@ -591,131 +604,149 @@ fn main() {
                 WindowEvent::KeyboardInput { event, .. }
                     if event.state == ElementState::Pressed =>
                 {
-                    match event.physical_key {
-                        PhysicalKey::Code(KeyCode::F1) => {
-                            help.toggle();
-                            window.set_cursor_icon(if help.active {
-                                CursorIcon::Help
-                            } else {
-                                CursorIcon::Default
-                            });
+                    if about_open {
+                        if matches!(
+                            event.physical_key,
+                            PhysicalKey::Code(KeyCode::Escape | KeyCode::F12)
+                        ) {
+                            about_open = false;
                         }
-                        PhysicalKey::Code(KeyCode::Escape) if help.active => {
-                            help.close();
-                            window.set_cursor_icon(CursorIcon::Default);
-                        }
-                        PhysicalKey::Code(KeyCode::KeyZ)
-                            if modifiers.control_key() || modifiers.super_key() =>
-                        {
-                            app.undo()
-                        }
-                        PhysicalKey::Code(KeyCode::KeyY)
-                            if modifiers.control_key() || modifiers.super_key() =>
-                        {
-                            app.redo()
-                        }
-                        PhysicalKey::Code(KeyCode::KeyS)
-                            if modifiers.control_key() || modifiers.super_key() =>
-                        {
-                            if modifiers.shift_key() {
-                                choose_export(save_tx.clone(), true)
-                            } else {
-                                choose_package(package_tx.clone())
+                    } else {
+                        match event.physical_key {
+                            PhysicalKey::Code(KeyCode::F12) => {
+                                help.close();
+                                window.set_cursor_icon(CursorIcon::Default);
+                                about_open = true;
                             }
+                            PhysicalKey::Code(KeyCode::F1) => {
+                                help.toggle();
+                                window.set_cursor_icon(if help.active {
+                                    CursorIcon::Help
+                                } else {
+                                    CursorIcon::Default
+                                });
+                            }
+                            PhysicalKey::Code(KeyCode::Escape) if help.active => {
+                                help.close();
+                                window.set_cursor_icon(CursorIcon::Default);
+                            }
+                            PhysicalKey::Code(KeyCode::KeyZ)
+                                if modifiers.control_key() || modifiers.super_key() =>
+                            {
+                                app.undo()
+                            }
+                            PhysicalKey::Code(KeyCode::KeyY)
+                                if modifiers.control_key() || modifiers.super_key() =>
+                            {
+                                app.redo()
+                            }
+                            PhysicalKey::Code(KeyCode::KeyS)
+                                if modifiers.control_key() || modifiers.super_key() =>
+                            {
+                                if modifiers.shift_key() {
+                                    choose_export(save_tx.clone(), true)
+                                } else {
+                                    choose_package(package_tx.clone())
+                                }
+                            }
+                            PhysicalKey::Code(KeyCode::KeyA)
+                                if modifiers.control_key() || modifiers.super_key() =>
+                            {
+                                app.select_all()
+                            }
+                            PhysicalKey::Code(KeyCode::Space) if modifiers.shift_key() => {
+                                app.audition_selection()
+                            }
+                            PhysicalKey::Code(KeyCode::Space) => app.play_pause(),
+                            PhysicalKey::Code(KeyCode::KeyK) => app.stop(),
+                            PhysicalKey::Code(KeyCode::Home) => app.seek(0.),
+                            PhysicalKey::Code(KeyCode::End) => app.seek(app.duration()),
+                            PhysicalKey::Code(KeyCode::PageUp) => app.jump_event(false),
+                            PhysicalKey::Code(KeyCode::PageDown) => app.jump_event(true),
+                            PhysicalKey::Code(KeyCode::KeyI) => app.select_event(),
+                            PhysicalKey::Code(KeyCode::Digit0) => app.fit_all(),
+                            PhysicalKey::Code(KeyCode::KeyZ) => app.zoom_selection(),
+                            PhysicalKey::Code(KeyCode::KeyL) if modifiers.shift_key() => {
+                                app.loop_selection()
+                            }
+                            PhysicalKey::Code(KeyCode::ArrowLeft) => app.seek(app.time() - 5.),
+                            PhysicalKey::Code(KeyCode::ArrowRight) => app.seek(app.time() + 5.),
+                            PhysicalKey::Code(KeyCode::KeyL) => app.toggle_loop(),
+                            PhysicalKey::Code(KeyCode::KeyP) => {
+                                app.follow_playhead = !app.follow_playhead
+                            }
+                            PhysicalKey::Code(KeyCode::KeyT) => app.show_tracks = !app.show_tracks,
+                            PhysicalKey::Code(KeyCode::KeyE) => app.edit_mode = !app.edit_mode,
+                            PhysicalKey::Code(KeyCode::KeyR) if app.edit_mode => {
+                                app.tool = Tool::Range
+                            }
+                            PhysicalKey::Code(KeyCode::KeyV) if app.edit_mode => {
+                                app.tool = Tool::Lasso
+                            }
+                            PhysicalKey::Code(KeyCode::KeyG) if app.edit_mode => {
+                                app.apply_operation(Operation::Gcd)
+                            }
+                            PhysicalKey::Code(KeyCode::Equal) if app.edit_mode => {
+                                app.apply_operation(Operation::GainUp)
+                            }
+                            PhysicalKey::Code(KeyCode::Minus) if app.edit_mode => {
+                                app.apply_operation(Operation::GainDown)
+                            }
+                            PhysicalKey::Code(KeyCode::KeyN) if app.edit_mode => {
+                                app.apply_operation(Operation::Normalize)
+                            }
+                            PhysicalKey::Code(KeyCode::KeyM) if app.edit_mode => {
+                                app.apply_operation(Operation::Mute)
+                            }
+                            PhysicalKey::Code(KeyCode::KeyX) if app.edit_mode => {
+                                app.apply_operation(Operation::Reverse)
+                            }
+                            PhysicalKey::Code(KeyCode::KeyF) if app.edit_mode => {
+                                app.apply_operation(Operation::FadeIn)
+                            }
+                            PhysicalKey::Code(KeyCode::KeyD) if app.edit_mode => {
+                                app.apply_operation(Operation::FadeOut)
+                            }
+                            PhysicalKey::Code(KeyCode::Escape) if app.edit_mode => {
+                                app.clear_selection();
+                            }
+                            PhysicalKey::Code(KeyCode::BracketLeft) if modifiers.shift_key() => {
+                                app.step_transition(false);
+                            }
+                            PhysicalKey::Code(KeyCode::BracketRight) if modifiers.shift_key() => {
+                                app.step_transition(true);
+                            }
+                            PhysicalKey::Code(KeyCode::BracketLeft) => {
+                                app.partials = app.partials.saturating_sub(1).max(1);
+                                app.reanalyze();
+                            }
+                            PhysicalKey::Code(KeyCode::BracketRight) => {
+                                app.partials = (app.partials + 1).min(24);
+                                app.reanalyze();
+                            }
+                            PhysicalKey::Code(KeyCode::Digit1) => {
+                                app.fft_size = (app.fft_size / 2).max(512);
+                                app.hop = app.fft_size / 4;
+                                app.reanalyze();
+                            }
+                            PhysicalKey::Code(KeyCode::Digit2) => {
+                                app.fft_size = (app.fft_size * 2).min(8192);
+                                app.hop = app.fft_size / 4;
+                                app.reanalyze();
+                            }
+                            PhysicalKey::Code(KeyCode::Digit3) => {
+                                app.hop = (app.hop / 2).max(128);
+                                app.reanalyze();
+                            }
+                            PhysicalKey::Code(KeyCode::Digit4) => {
+                                app.hop = (app.hop * 2).min(app.fft_size);
+                                app.reanalyze();
+                            }
+                            PhysicalKey::Code(KeyCode::KeyO) => {
+                                choose_file(dialog_tx.clone());
+                            }
+                            _ => {}
                         }
-                        PhysicalKey::Code(KeyCode::KeyA)
-                            if modifiers.control_key() || modifiers.super_key() =>
-                        {
-                            app.select_all()
-                        }
-                        PhysicalKey::Code(KeyCode::Space) if modifiers.shift_key() => {
-                            app.audition_selection()
-                        }
-                        PhysicalKey::Code(KeyCode::Space) => app.play_pause(),
-                        PhysicalKey::Code(KeyCode::KeyK) => app.stop(),
-                        PhysicalKey::Code(KeyCode::Home) => app.seek(0.),
-                        PhysicalKey::Code(KeyCode::End) => app.seek(app.duration()),
-                        PhysicalKey::Code(KeyCode::PageUp) => app.jump_event(false),
-                        PhysicalKey::Code(KeyCode::PageDown) => app.jump_event(true),
-                        PhysicalKey::Code(KeyCode::KeyI) => app.select_event(),
-                        PhysicalKey::Code(KeyCode::Digit0) => app.fit_all(),
-                        PhysicalKey::Code(KeyCode::KeyZ) => app.zoom_selection(),
-                        PhysicalKey::Code(KeyCode::KeyL) if modifiers.shift_key() => {
-                            app.loop_selection()
-                        }
-                        PhysicalKey::Code(KeyCode::ArrowLeft) => app.seek(app.time() - 5.),
-                        PhysicalKey::Code(KeyCode::ArrowRight) => app.seek(app.time() + 5.),
-                        PhysicalKey::Code(KeyCode::KeyL) => app.toggle_loop(),
-                        PhysicalKey::Code(KeyCode::KeyP) => {
-                            app.follow_playhead = !app.follow_playhead
-                        }
-                        PhysicalKey::Code(KeyCode::KeyT) => app.show_tracks = !app.show_tracks,
-                        PhysicalKey::Code(KeyCode::KeyE) => app.edit_mode = !app.edit_mode,
-                        PhysicalKey::Code(KeyCode::KeyR) if app.edit_mode => app.tool = Tool::Range,
-                        PhysicalKey::Code(KeyCode::KeyV) if app.edit_mode => app.tool = Tool::Lasso,
-                        PhysicalKey::Code(KeyCode::KeyG) if app.edit_mode => {
-                            app.apply_operation(Operation::Gcd)
-                        }
-                        PhysicalKey::Code(KeyCode::Equal) if app.edit_mode => {
-                            app.apply_operation(Operation::GainUp)
-                        }
-                        PhysicalKey::Code(KeyCode::Minus) if app.edit_mode => {
-                            app.apply_operation(Operation::GainDown)
-                        }
-                        PhysicalKey::Code(KeyCode::KeyN) if app.edit_mode => {
-                            app.apply_operation(Operation::Normalize)
-                        }
-                        PhysicalKey::Code(KeyCode::KeyM) if app.edit_mode => {
-                            app.apply_operation(Operation::Mute)
-                        }
-                        PhysicalKey::Code(KeyCode::KeyX) if app.edit_mode => {
-                            app.apply_operation(Operation::Reverse)
-                        }
-                        PhysicalKey::Code(KeyCode::KeyF) if app.edit_mode => {
-                            app.apply_operation(Operation::FadeIn)
-                        }
-                        PhysicalKey::Code(KeyCode::KeyD) if app.edit_mode => {
-                            app.apply_operation(Operation::FadeOut)
-                        }
-                        PhysicalKey::Code(KeyCode::Escape) if app.edit_mode => {
-                            app.clear_selection();
-                        }
-                        PhysicalKey::Code(KeyCode::BracketLeft) if modifiers.shift_key() => {
-                            app.step_transition(false);
-                        }
-                        PhysicalKey::Code(KeyCode::BracketRight) if modifiers.shift_key() => {
-                            app.step_transition(true);
-                        }
-                        PhysicalKey::Code(KeyCode::BracketLeft) => {
-                            app.partials = app.partials.saturating_sub(1).max(1);
-                            app.reanalyze();
-                        }
-                        PhysicalKey::Code(KeyCode::BracketRight) => {
-                            app.partials = (app.partials + 1).min(24);
-                            app.reanalyze();
-                        }
-                        PhysicalKey::Code(KeyCode::Digit1) => {
-                            app.fft_size = (app.fft_size / 2).max(512);
-                            app.hop = app.fft_size / 4;
-                            app.reanalyze();
-                        }
-                        PhysicalKey::Code(KeyCode::Digit2) => {
-                            app.fft_size = (app.fft_size * 2).min(8192);
-                            app.hop = app.fft_size / 4;
-                            app.reanalyze();
-                        }
-                        PhysicalKey::Code(KeyCode::Digit3) => {
-                            app.hop = (app.hop / 2).max(128);
-                            app.reanalyze();
-                        }
-                        PhysicalKey::Code(KeyCode::Digit4) => {
-                            app.hop = (app.hop * 2).min(app.fft_size);
-                            app.reanalyze();
-                        }
-                        PhysicalKey::Code(KeyCode::KeyO) => {
-                            choose_file(dialog_tx.clone());
-                        }
-                        _ => {}
                     }
                 }
                 WindowEvent::RedrawRequested => {
@@ -730,7 +761,7 @@ fn main() {
                         let data = app.spec_pixels(palette);
                         gpu.upload_spec(&data, app.spec_width, app.spec_height);
                     }
-                    ui::draw(&mut gpu, &app, dark, cursor, &recent, &help);
+                    ui::draw(&mut gpu, &app, dark, cursor, &recent, &help, about_open);
                 }
                 _ => {}
             },

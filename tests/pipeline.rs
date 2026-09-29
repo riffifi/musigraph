@@ -1,4 +1,4 @@
-use musigraph::{audio_io, dsp::stft, midi, model};
+use musigraph::{audio_io, dsp::stft, midi, model, project};
 use std::{f32::consts::TAU, fs, path::PathBuf};
 fn wav(samples: &[f32], rate: u32, path: &std::path::Path) {
     let mut b = Vec::new();
@@ -120,5 +120,35 @@ fn compressed_formats() {
         let a = audio_io::decode(&output).unwrap();
         assert!(a.samples.len() > 2048, "{ext}");
     }
+    let cover_path = dir.join("cover.jpg");
+    image::DynamicImage::ImageRgb8(image::RgbImage::from_pixel(8, 8, image::Rgb([120, 40, 20])))
+        .save(&cover_path)
+        .unwrap();
+    let covered = dir.join("covered.mp3");
+    let status = std::process::Command::new("ffmpeg")
+        .args(["-hide_banner", "-loglevel", "error", "-y", "-i"])
+        .arg(&input)
+        .arg("-i")
+        .arg(&cover_path)
+        .args([
+            "-map",
+            "0:a",
+            "-map",
+            "1:v",
+            "-c:a",
+            "libmp3lame",
+            "-c:v",
+            "mjpeg",
+            "-disposition:v",
+            "attached_pic",
+            "-id3v2_version",
+            "3",
+        ])
+        .arg(&covered)
+        .status()
+        .unwrap();
+    assert!(status.success());
+    let track = project::load_track(&covered).unwrap();
+    assert!(track.cover.is_some(), "embedded MP3 cover was not found");
     let _ = fs::remove_dir_all(dir);
 }

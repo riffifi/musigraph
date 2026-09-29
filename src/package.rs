@@ -1,4 +1,5 @@
 use crate::{
+    art,
     audio_io::Audio,
     edit::Operation,
     midi::Note,
@@ -13,6 +14,8 @@ use std::{
 
 const MAX_TRACKS: usize = 128;
 const MAX_SAMPLES: usize = 1_500_000_000;
+const MAX_COVER_BYTES: usize = 4 * 1024 * 1024;
+pub const FORMAT_VERSION: u8 = 3;
 
 #[derive(Clone)]
 pub struct Patch {
@@ -168,7 +171,7 @@ pub fn save(path: &Path, project: &Package) -> Result<(), String> {
     }
     let file = File::create(path).map_err(|e| e.to_string())?;
     let mut w = BufWriter::new(file);
-    put(&mut w, b"MGP2")?;
+    put(&mut w, b"MGP3")?;
     put_u32(&mut w, project.tracks.len() as u32)?;
     put_u32(&mut w, project.selected_track as u32)?;
     put_f32(&mut w, project.selection.map(|s| s.0).unwrap_or(f32::NAN))?;
@@ -207,6 +210,16 @@ pub fn save(path: &Path, project: &Package) -> Result<(), String> {
             put(&mut w, &[note.pitch, note.velocity, note.channel])?;
         }
         write_samples(&mut w, &track.audio.samples)?;
+        let cover = track
+            .cover
+            .as_ref()
+            .map(|cover| cover.encoded.as_slice())
+            .unwrap_or(&[]);
+        if cover.len() > MAX_COVER_BYTES {
+            return Err("Cover art is too large".into());
+        }
+        put_u32(&mut w, cover.len() as u32)?;
+        put(&mut w, cover)?;
     }
     put_u32(&mut w, project.master.rate)?;
     write_samples(&mut w, &project.master.samples)?;
@@ -237,6 +250,8 @@ pub fn load(path: &Path) -> Result<Package, String> {
         1
     } else if &magic == b"MGP2" {
         2
+    } else if &magic == b"MGP3" {
+        3
     } else {
         0
     };
@@ -327,10 +342,22 @@ pub fn load(path: &Path) -> Result<Package, String> {
             });
         }
         let samples = read_samples(&mut r)?;
+        let cover = if version >= 3 {
+            let length = get_u32(&mut r)? as usize;
+            if length > MAX_COVER_BYTES {
+                return Err("Cover art is too large".into());
+            }
+            let mut bytes = vec![0; length];
+            take(&mut r, &mut bytes)?;
+            art::decode(bytes)
+        } else {
+            None
+        };
         tracks.push(QueueTrack {
             name,
             audio: Audio { samples, rate },
             notes,
+            cover,
             transition: Transition {
                 seconds,
                 in_cue,
@@ -418,6 +445,17 @@ mod tests {
     fn project_round_trip_and_checksum() {
         let path = std::env::temp_dir().join(format!("project-{}-{}.mgp", std::process::id(), 17));
         let samples = Arc::new(vec![0., 0.25, -0.5, 1.]);
+        let mut cover_bytes = Vec::new();
+        image::DynamicImage::ImageRgba8(image::RgbaImage::from_pixel(
+            2,
+            2,
+            image::Rgba([12, 34, 56, 255]),
+        ))
+        .write_to(
+            &mut std::io::Cursor::new(&mut cover_bytes),
+            image::ImageFormat::Png,
+        )
+        .unwrap();
         let track = QueueTrack {
             name: "test.wav".into(),
             audio: Audio {
@@ -425,6 +463,7 @@ mod tests {
                 rate: 44100,
             },
             notes: Vec::new(),
+            cover: art::decode(cover_bytes),
             transition: Transition::default(),
         };
         let patch = Patch {
@@ -461,6 +500,9 @@ mod tests {
         save(&path, &state).unwrap();
         let loaded = load(&path).unwrap();
         assert_eq!(loaded.tracks[0].name, "test.wav");
+        let cover = loaded.tracks[0].cover.as_ref().unwrap();
+        assert_eq!((cover.width, cover.height), (2, 2));
+        assert_eq!(&cover.pixels[..4], &[12, 34, 56, 255]);
         assert_eq!(
             loaded.master.samples.as_slice(),
             state.master.samples.as_slice()

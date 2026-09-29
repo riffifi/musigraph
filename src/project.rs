@@ -1,4 +1,5 @@
 use crate::{
+    art::{self, CoverArt},
     audio_io::{self, Audio},
     dsp::yin,
     midi::{self, Note},
@@ -12,7 +13,7 @@ pub fn load_track(path: &Path) -> Result<QueueTrack, String> {
         .and_then(|x| x.to_str())
         .unwrap_or("")
         .to_ascii_lowercase();
-    let (audio, notes) = if extension == "mid" || extension == "midi" {
+    let (audio, notes, cover) = if extension == "mid" || extension == "midi" {
         let bytes = std::fs::read(path).map_err(|e| e.to_string())?;
         let notes = midi::parse(&bytes)?;
         let samples = synth::render_midi(&notes, 44100);
@@ -22,19 +23,23 @@ pub fn load_track(path: &Path) -> Result<QueueTrack, String> {
                 rate: 44100,
             },
             notes,
+            None,
         )
     } else {
-        (audio_io::decode(path)?, Vec::new())
+        let (audio, cover) = audio_io::decode_with_art(path)?;
+        (audio, Vec::new(), cover)
     };
     let name = path
         .file_name()
         .and_then(|x| x.to_str())
         .unwrap_or("track")
         .to_owned();
+    let cover = cover.or_else(|| art::from_sidecar(path));
     Ok(QueueTrack {
         name,
         audio,
         notes,
+        cover,
         transition: Transition::default(),
     })
 }
@@ -69,6 +74,7 @@ pub struct QueueTrack {
     pub name: String,
     pub audio: Audio,
     pub notes: Vec<Note>,
+    pub cover: Option<Arc<CoverArt>>,
     pub transition: Transition,
 }
 
@@ -574,6 +580,7 @@ mod tests {
                 rate: 1000,
             },
             notes: Vec::new(),
+            cover: None,
             transition,
         }
     }

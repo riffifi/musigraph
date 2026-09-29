@@ -597,6 +597,7 @@ pub enum SettingsAction {
     Theme,
     Import,
     Reload,
+    About,
     Surface,
 }
 pub fn settings_action(g: &Gpu, a: &App, x: f32, y: f32) -> Option<SettingsAction> {
@@ -617,7 +618,16 @@ pub fn settings_action(g: &Gpu, a: &App, x: f32, y: f32) -> Option<SettingsActio
             Some(SettingsAction::Reload)
         };
     }
+    if y >= sy + 158. && x < l.panel_x + 115. {
+        return Some(SettingsAction::About);
+    }
     Some(SettingsAction::Surface)
+}
+pub fn welcome_about_hit(width: f32, x: f32, y: f32) -> bool {
+    x >= width - 112. && x < width - 48. && (8. ..46.).contains(&y)
+}
+pub fn about_close_hit(width: f32, x: f32, y: f32) -> bool {
+    x >= width - 92. && x < width - 8. && (8. ..48.).contains(&y)
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum QueueAction {
@@ -756,6 +766,12 @@ pub fn transport_action(width: f32, transport_y: f32, x: f32, y: f32) -> Option<
 pub fn help_at(g: &Gpu, a: &App, recent_count: usize, x: f32, y: f32) -> HelpInfo {
     let info = |title, body| HelpInfo { title, body };
     if a.audio.is_none() {
+        if welcome_about_hit(g.width, x, y) {
+            return info(
+                "About",
+                "Show the current version, author, libraries and project format.",
+            );
+        }
         return match welcome_action(g.width, g.height, x, y, recent_count) {
             Some(WelcomeAction::OpenFile) => info(
                 "Open audio or MIDI",
@@ -822,6 +838,10 @@ pub fn help_at(g: &Gpu, a: &App, recent_count: usize, x: f32, y: f32) -> HelpInf
             SettingsAction::Reload => info(
                 "Reload theme",
                 "Read the current theme file again after editing it.",
+            ),
+            SettingsAction::About => info(
+                "About",
+                "Show the current version, author, libraries and project format.",
             ),
             SettingsAction::Surface => info(
                 "Settings",
@@ -974,6 +994,96 @@ fn draw_help(g: &mut Gpu, p: Palette, help: &HelpState) {
         g.text(x + 12., y + 43. + index as f32 * 16., 11., line, p.muted);
     }
 }
+fn draw_cover_preview(g: &mut Gpu, a: &App, p: Palette, cursor: (f32, f32)) {
+    let index = if settings_action(g, a, cursor.0, cursor.1).is_none() {
+        match queue_action(g, a, cursor.0, cursor.1) {
+            Some(QueueAction::Select(index)) => Some(index),
+            _ => None,
+        }
+    } else {
+        None
+    };
+    let art = index
+        .and_then(|index| a.queue.get(index))
+        .and_then(|track| track.cover.as_deref());
+    g.set_cover(art);
+    let Some(art) = art else { return };
+    let l = layout(g);
+    let card = 168.;
+    let x = (l.panel_x - card - 8.).max(8.);
+    let y = (cursor.1 - card * 0.5).clamp(8., (l.transport_y - card - 8.).max(8.));
+    g.rect(x, y, card, card, p.panel);
+    g.rect(x, y, card, 1., p.line);
+    g.rect(x, y + card - 1., card, 1., p.line);
+    g.rect(x, y, 1., card, p.line);
+    g.rect(x + card - 1., y, 1., card, p.line);
+    let scale = (card - 16.) / art.width.max(art.height) as f32;
+    let width = art.width as f32 * scale;
+    let height = art.height as f32 * scale;
+    g.cover(
+        x + (card - width) * 0.5,
+        y + (card - height) * 0.5,
+        width,
+        height,
+        [
+            0.5 / 256.,
+            0.5 / 256.,
+            art.width.saturating_sub(1) as f32 / 256.,
+            art.height.saturating_sub(1) as f32 / 256.,
+        ],
+    );
+}
+fn draw_about(g: &mut Gpu, p: Palette) {
+    let x = ((g.width - 520.) * 0.5).max(24.);
+    let y = ((g.height - 500.) * 0.5).max(24.);
+    g.text(g.width - 82., 35., 13., "close", p.muted);
+    g.text(x, y + 26., 20., "Musigraph", p.ink);
+    g.text(
+        x,
+        y + 55.,
+        13.,
+        &format!("Version {}", env!("CARGO_PKG_VERSION")),
+        p.muted,
+    );
+    g.rect(x, y + 72., (g.width - x * 2.).min(520.), 1., p.line);
+    g.text(x, y + 103., 12., "Author", p.muted);
+    g.text(x, y + 126., 14., env!("CARGO_PKG_AUTHORS"), p.ink);
+    g.text(x, y + 163., 12., "Libraries", p.muted);
+    for (index, library) in [
+        "winit 0.29  window and input",
+        "wgpu 0.19  graphics",
+        "cpal 0.15  audio output",
+        "symphonia 0.5  audio decoding and metadata",
+        "rfd 0.15  file dialogs",
+        "fontdue 0.9  text rasterization",
+        "image 0.25  JPEG and PNG covers",
+    ]
+    .iter()
+    .enumerate()
+    {
+        g.text(x, y + 188. + index as f32 * 23., 12., library, p.ink);
+    }
+    g.text(x, y + 349., 12., "Noto Mono  OFL 1.1", p.ink);
+    g.text(x, y + 373., 12., "Project files", p.muted);
+    g.text(
+        x,
+        y + 397.,
+        12.,
+        &format!(
+            "MGP{}  (opens MGP1 and MGP2)",
+            crate::package::FORMAT_VERSION
+        ),
+        p.ink,
+    );
+    g.text(x, y + 436., 12., "Latest release", p.muted);
+    g.text(
+        x,
+        y + 460.,
+        12.,
+        &format!("{}  -  2026-09-29", env!("CARGO_PKG_VERSION")),
+        p.ink,
+    );
+}
 pub fn draw(
     g: &mut Gpu,
     a: &App,
@@ -981,10 +1091,17 @@ pub fn draw(
     cursor: (f32, f32),
     recent: &[PathBuf],
     help: &HelpState,
+    about_open: bool,
 ) {
     let p = a.theme.palette(dark);
     g.clear();
+    if about_open {
+        draw_about(g, p);
+        g.render(p.bg);
+        return;
+    }
     if a.audio.is_none() {
+        g.set_cover(None);
         let (x, y, w) = welcome_bounds(g.width, g.height);
         let help_hot = help_button_hit(g.width, g.height, false, cursor.0, cursor.1);
         g.text(
@@ -1001,6 +1118,17 @@ pub fn draw(
         if help.active || help_hot {
             g.rect(g.width - 44., 42., 36., 1., p.ink);
         }
+        g.text(
+            g.width - 105.,
+            34.,
+            13.,
+            "about",
+            if welcome_about_hit(g.width, cursor.0, cursor.1) {
+                p.ink
+            } else {
+                p.muted
+            },
+        );
         g.text(x, y + 22., 18., "Open a file", p.ink);
         let hover = welcome_action(g.width, g.height, cursor.0, cursor.1, recent.len());
         for (index, label, action) in [
@@ -1421,6 +1549,7 @@ pub fn draw(
             );
         }
     }
+    draw_cover_preview(g, a, p, cursor);
     if let Some(i) = a.transition_index() {
         let t = &a.queue[i].transition;
         let place = a.placements.get(i).copied().unwrap_or_default();
@@ -1673,7 +1802,7 @@ pub fn draw(
             "events  PgUp/PgDn    select  I",
             p.muted,
         );
-        g.text(px, sy + 178., 12., "play selection  Shift+Space", p.muted);
+        g.text(px, sy + 178., 13., "about", p.ink);
     }
     g.rect(0., l.transport_y, g.width, 1., p.line);
     g.rect(0., l.transport_y + 1., g.width, 37., p.panel);
@@ -1810,6 +1939,14 @@ pub fn draw(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn about_targets_stay_clear_of_help_and_welcome_actions() {
+        assert!(welcome_about_hit(930., 845., 25.));
+        assert!(!welcome_about_hit(930., 905., 25.));
+        assert_eq!(welcome_action(930., 560., 845., 25., 0), None);
+        assert!(about_close_hit(930., 875., 25.));
+        assert!(!about_close_hit(930., 820., 25.));
+    }
     #[test]
     fn panel_targets_match_controls_and_gaps() {
         let controls = panel_controls(575., 930., true);
